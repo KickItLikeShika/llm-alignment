@@ -10,11 +10,9 @@ def train_orpo(train_dataset=None):
     attn_implementation = "flash_attention_2"
     torch_dtype = torch.bfloat16 
         
-    # Model
     base_model = "meta-llama/Llama-3.2-1B"
     new_model = "OrpoLlama-3.2-1B"
 
-    # QLoRA config
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -22,7 +20,6 @@ def train_orpo(train_dataset=None):
         bnb_4bit_use_double_quant=True,
     )
 
-    # LoRA config
     peft_config = LoraConfig(
         r=16,
         lora_alpha=32,
@@ -32,11 +29,9 @@ def train_orpo(train_dataset=None):
         target_modules=['up_proj', 'down_proj', 'gate_proj', 'k_proj', 'q_proj', 'v_proj', 'o_proj']
     )
 
-    # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(base_model)
     tokenizer.pad_token = tokenizer.eos_token
     
-    # Load model
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
         quantization_config=bnb_config,
@@ -94,7 +89,6 @@ def train_orpo(train_dataset=None):
     trainer.train()
     trainer.save_model(new_model)
 
-    # Flush memory
     del trainer, model
     gc.collect()
     torch.cuda.empty_cache()
@@ -110,7 +104,6 @@ def train_orpo(train_dataset=None):
     )
     model, tokenizer = setup_chat_format(model, tokenizer)
 
-    # Merge adapter with base model
     model = PeftModel.from_pretrained(model, new_model)
     model = model.merge_and_unload()
 
