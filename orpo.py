@@ -6,18 +6,19 @@ from peft import LoraConfig, PeftModel, prepare_model_for_kbit_training, get_pef
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import ORPOConfig, ORPOTrainer, setup_chat_format
 
-def train_orpo(train_dataset=None):
+def train_orpo(train_dataset=None, base_model_path=None):
     """
     Train the model with ORPO.
     Args:
         train_dataset: The dataset to train on.
+        base_model_path: Optional path to a fine-tuned model to use as base instead of the default.
     Returns:
         The trained model and tokenizer.
     """
     attn_implementation = "flash_attention_2"
     torch_dtype = torch.bfloat16 
         
-    base_model = "meta-llama/Llama-3.2-1B"
+    base_model = base_model_path if base_model_path else "meta-llama/Llama-3.2-1B"
     new_model = "ORPOLlama-3.2-1B"
 
     bnb_config = BitsAndBytesConfig(
@@ -45,7 +46,12 @@ def train_orpo(train_dataset=None):
         device_map="auto",
         attn_implementation=attn_implementation
     )
-    model, tokenizer = setup_chat_format(model, tokenizer)
+    
+    # only set up chat format if it doesn't already exist, because it might already be set up in the SFT model
+    if not hasattr(tokenizer, 'chat_template') or tokenizer.chat_template is None:
+        print("using SFT model, setting up chat format...")
+        model, tokenizer = setup_chat_format(model, tokenizer)
+
     model = prepare_model_for_kbit_training(model)
 
     model = get_peft_model(model, peft_config)
@@ -121,7 +127,9 @@ def train_orpo(train_dataset=None):
         torch_dtype=torch.bfloat16,
         device_map="auto",
     )
-    model, tokenizer = setup_chat_format(model, tokenizer)
+    if not hasattr(tokenizer, 'chat_template') or tokenizer.chat_template is None:
+        print("using ORPO model, setting up chat format...")
+        model, tokenizer = setup_chat_format(model, tokenizer)
 
     model = PeftModel.from_pretrained(model, new_model)
     model = model.merge_and_unload()
