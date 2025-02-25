@@ -2,7 +2,6 @@ import os
 import gc
 import torch
 import wandb
-import json
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import setup_chat_format
@@ -14,6 +13,12 @@ DATASET_NAME = "mlabonne/orpo-dpo-mix-40k"
 DATASET_PATH = "./data"
 BASE_MODEL = "meta-llama/Llama-3.2-1B"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# training flags
+TRAIN_BASE_EVAL = True  # evaluate base model
+TRAIN_SFT = True        # train with SFT
+TRAIN_ORPO = True       # train with ORPO
+TRAIN_ORPO_FROM_SFT = True  # train ORPO from SFT model instead of base model
 
 def load_and_prepare_dataset():
     """
@@ -97,52 +102,74 @@ def main():
     """
     train_dataset, val_dataset = load_and_prepare_dataset()
     
-    print("\loading base model for initial eval...")
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, token=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",
-        token=True
-    )
-    model, tokenizer = setup_chat_format(model, tokenizer)
+    initial_scores = None
+    sft_scores = None
+    orpo_scores = None
+    grpo_scores = None
+    sft_model_path = "results/sft"
     
-    print("\nperforming initial eval...")
-    initial_scores = evaluate_model(model, tokenizer, val_dataset)
-    print(f"Base Model: {initial_scores}")
-    
-    del model
-    gc.collect()
-    torch.cuda.empty_cache()
+    # Evaluate base model
+    if TRAIN_BASE_EVAL:
+        print("\loading base model for initial eval...")
+        tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, token=True)
+        model = AutoModelForCausalLM.from_pretrained(
+            BASE_MODEL,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+            token=True
+        )
+        model, tokenizer = setup_chat_format(model, tokenizer)
+        
+        print("\performing initial eval...")
+        initial_scores = evaluate_model(model, tokenizer, val_dataset)
+        print(f"base Model: {initial_scores}")
+        
+        del model
+        gc.collect()
+        torch.cuda.empty_cache()
     
     # train with SFT
-    print("\training with SFT...")
-    model, tokenizer = train_sft(train_dataset)
-    
-    # eval after SFT
-    print("\eval SFT model...")
-    sft_scores = evaluate_model(model, tokenizer, val_dataset)
-    
-    del model
-    gc.collect()
-    torch.cuda.empty_cache()
+    if TRAIN_SFT:
+        print("\ntraining with SFT...")
+        model, tokenizer = train_sft(train_dataset)
+        
+        # eval after SFT
+        print("\nevaluating SFT model...")
+        sft_scores = evaluate_model(model, tokenizer, val_dataset)
+        print(f"After SFT: {sft_scores}")
+        
+        del model
+        gc.collect()
+        torch.cuda.empty_cache()
     
     # train with ORPO
-    print("\nTraining with ORPO...")
-    model, tokenizer = train_orpo(train_dataset)
+    if TRAIN_ORPO:
+        print("\ntraining with ORPO...")
+        
+        # if we want to train ORPO from SFT model
+        if TRAIN_ORPO_FROM_SFT and os.path.exists(sft_model_path):
+            print(f"using SFT model from {sft_model_path} as base for ORPO training")
+            # modify train_orpo to accept a model path
+            model, tokenizer = train_orpo(train_dataset, base_model_path=sft_model_path)
+        else:
+            model, tokenizer = train_orpo(train_dataset)
 
-    # eval after ORPO
-    print("\nEvaluating ORPO model...")
-    orpo_scores = evaluate_model(model, tokenizer, val_dataset)
+        # eval after ORPO
+        print("\nevaluating ORPO model...")
+        orpo_scores = evaluate_model(model, tokenizer, val_dataset)
+        print(f"After ORPO: {orpo_scores}")
 
-    print("\n\nResults:")
-    print(f"Base Model: {initial_scores}")
-    print(f"After SFT: {sft_scores}")
-    print(f"After ORPO: {orpo_scores}")
+    print("\n\nResults Summary:")
+    if initial_scores:
+        print(f"Base Model: {initial_scores}")
+    if sft_scores:
+        print(f"After SFT: {sft_scores}")
+    if orpo_scores:
+        print(f"After ORPO: {orpo_scores}")
 
 if __name__ == "__main__":
     main()
 
 # Base Model: {'rouge1': 0.14786865275767497, 'rouge2': 0.05741813089556658, 'rougeL': 0.09560573415051726}
 # SFT Model: {'rouge1': 0.16640010568749722, 'rouge2': 0.06878433704191969, 'rougeL': 0.1018761352773121}
-# ORPO Model: {'rouge1': 0.1505326146060846, 'rouge2': 0.05853340860919248, 'rougeL': 0.09578936523988472}
+# ORPO Model from Base: {'rouge1': 0.1505326146060846, 'rouge2': 0.05853340860919248, 'rougeL': 0.09578936523988472}
