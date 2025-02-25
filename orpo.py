@@ -2,16 +2,23 @@ import gc
 import os
 import torch
 from datasets import load_dataset
-from peft import LoraConfig, PeftModel, prepare_model_for_kbit_training
+from peft import LoraConfig, PeftModel, prepare_model_for_kbit_training, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import ORPOConfig, ORPOTrainer, setup_chat_format
 
 def train_orpo(train_dataset=None):
+    """
+    Train the model with ORPO.
+    Args:
+        train_dataset: The dataset to train on.
+    Returns:
+        The trained model and tokenizer.
+    """
     attn_implementation = "flash_attention_2"
     torch_dtype = torch.bfloat16 
         
     base_model = "meta-llama/Llama-3.2-1B"
-    new_model = "OrpoLlama-3.2-1B"
+    new_model = "OrpoLlama-3.2-1B-orpo"
 
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -21,8 +28,8 @@ def train_orpo(train_dataset=None):
     )
 
     peft_config = LoraConfig(
-        r=16,
-        lora_alpha=32,
+        r=32,
+        lora_alpha=16,
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
@@ -38,7 +45,11 @@ def train_orpo(train_dataset=None):
         device_map="auto",
         attn_implementation=attn_implementation
     )
+    model, tokenizer = setup_chat_format(model, tokenizer)
     model = prepare_model_for_kbit_training(model)
+
+    model = get_peft_model(model, peft_config)
+    model.print_trainable_parameters()
 
     if train_dataset is None:
         dataset_name = "mlabonne/orpo-dpo-mix-40k"
@@ -57,13 +68,23 @@ def train_orpo(train_dataset=None):
         num_proc=os.cpu_count(),
     )
 
+    # just to evalaute while training
     dataset = dataset.train_test_split(test_size=0.01)
+
+    print("\nExample formatted training data:")
+    for i in range(2):
+        print(f"\nExample {i+1}:")
+        print("Chosen text:")
+        print(dataset["train"][i]["chosen"])
+        print("\nRejected text:")
+        print(dataset["train"][i]["rejected"])
+        print("-" * 80)
 
     orpo_args = ORPOConfig(
         learning_rate=8e-6,
         beta=0.1,
         lr_scheduler_type="linear",
-        max_length=1024,
+        max_length=2048,
         max_prompt_length=512,
         per_device_train_batch_size=2,
         per_device_eval_batch_size=2,
@@ -72,7 +93,7 @@ def train_orpo(train_dataset=None):
         num_train_epochs=1,
         evaluation_strategy="steps",
         eval_steps=0.2,
-        logging_steps=20,
+        logging_steps=1000,
         warmup_steps=10,
         report_to="wandb",
         output_dir="./results/",
@@ -83,7 +104,6 @@ def train_orpo(train_dataset=None):
         args=orpo_args,
         train_dataset=dataset["train"],
         eval_dataset=dataset["test"],
-        peft_config=peft_config,
         tokenizer=tokenizer,
     )
     trainer.train()
@@ -93,7 +113,6 @@ def train_orpo(train_dataset=None):
     gc.collect()
     torch.cuda.empty_cache()
 
-    # Reload tokenizer and model
     tokenizer = AutoTokenizer.from_pretrained(base_model)
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
