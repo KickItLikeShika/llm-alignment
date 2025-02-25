@@ -6,6 +6,13 @@ from unsloth.chat_templates import get_chat_template, train_on_responses_only
 from unsloth import FastLanguageModel, is_bfloat16_supported
 
 def train_sft(train_dataset=None):
+    """
+    Train the model with supervised finetuning.
+    Args:
+        train_dataset: The dataset to train on.
+    Returns:
+        The trained model and tokenizer.
+    """
     max_seq_length = 2048
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name="unsloth/Llama-3.2-1B",
@@ -47,6 +54,12 @@ def train_sft(train_dataset=None):
     
     train_dataset = train_dataset.map(apply_template, batched=True)
 
+    print("\nExample formatted training data:")
+    for i in range(2):
+        print(f"\nExample {i+1}:")
+        print(train_dataset[i]["text"])
+        print("-" * 80)
+
     print('training time...')
 
     trainer = SFTTrainer(
@@ -66,7 +79,7 @@ def train_sft(train_dataset=None):
             num_train_epochs=1,
             fp16=not is_bfloat16_supported(),
             bf16=is_bfloat16_supported(),
-            logging_steps=1,
+            logging_steps=1000,
             optim="adamw_8bit",
             weight_decay=0.01,
             warmup_steps=10,
@@ -85,12 +98,7 @@ def train_sft(train_dataset=None):
 
     model = FastLanguageModel.for_inference(model)
 
-    # Save model
     model.save_pretrained_merged("results/sft", tokenizer, save_method="merged_16bit")
-    model.push_to_hub_merged("KickItLikeShika/Llama-3.1-1B-sft-20k", tokenizer, save_method="merged_16bit")
-
-    quant_methods = ["q2_k", "q3_k_m", "q4_k_m", "q5_k_m", "q6_k", "q8_0"]
-    for quant in quant_methods:
-        model.push_to_hub_gguf("KickItLikeShika/Llama-3.1-1B-sft-20k-GGUF", tokenizer, quant)
+    model.push_to_hub_merged("KickItLikeShika/SFTLlama-3.2-1B", tokenizer, save_method="merged_16bit")
 
     return model, tokenizer
