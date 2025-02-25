@@ -18,7 +18,7 @@ def train_orpo(train_dataset=None):
     torch_dtype = torch.bfloat16 
         
     base_model = "meta-llama/Llama-3.2-1B"
-    new_model = "OrpoLlama-3.2-1B-orpo"
+    new_model = "ORPOLlama-3.2-1B"
 
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
